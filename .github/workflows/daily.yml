@@ -14,18 +14,19 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     steps:
-      # 1. Get your code (Updated to v4)
+      # 1. Get your code
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Set up Python (Updated to v5)
+      # 2. Set up Python
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.9'
           
+      # --- THE FIX IS HERE ---
       - name: Install Python Dependencies
-        run: pip install pandas
+        run: pip install pandas pandas_datareader requests
 
       - name: Fetch FRED Data
         run: python scripts/fetch_data.py
@@ -40,7 +41,7 @@ jobs:
           git commit -m "Auto-update liquidity data" || exit 0
           git push
 
-      # 4. Build the React Website (Updated to v4)
+      # 4. Build the React Website
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -52,7 +53,7 @@ jobs:
       - name: Build Project
         run: npm run build
 
-      # 5. Deploy to GitHub Pages (THE FIX: Updated to v3 and v4)
+      # 5. Deploy to GitHub Pages
       - name: Upload Artifact
         uses: actions/upload-pages-artifact@v3
         with:
