@@ -4,9 +4,14 @@ import {
 } from 'recharts';
 
 // --- UTILS ---
-const formatCurrency = (value) => {
-  if (value >= 1000) return `$${(value / 1000).toFixed(1)}T`;
-  return `$${value.toFixed(0)}B`;
+const formatCurrencyAxis = (value) => {
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}T`; // Trillions
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(0)}B`; // Billions
+  return `$${value}M`; // Millions
+};
+
+const formatTooltipValue = (value) => {
+  return new Intl.NumberFormat('en-US').format(value);
 };
 
 // --- CHART COMPONENT ---
@@ -17,10 +22,6 @@ const DashboardChart = ({ title, data, color, height = '350px' }) => {
   const min = Math.min(...values);
   const max = Math.max(...values);
   const padding = (max - min) * 0.05;
-
-  // SMART DOTS LOGIC:
-  // If we have fewer than 60 points (e.g., 30 days or 1 week), show the big bubbles.
-  // If we have more (e.g., 1 Year), hide them so it doesn't look gross.
   const showDots = data.length < 60;
 
   return (
@@ -46,7 +47,9 @@ const DashboardChart = ({ title, data, color, height = '350px' }) => {
               minTickGap={50}
               tickFormatter={(str) => {
                 const date = new Date(str);
-                return `${date.getMonth() + 1}/${date.getDate()}`;
+                const userTimezoneOffset = date.getTimezoneOffset() * 60000;
+                const adjustedDate = new Date(date.getTime() + userTimezoneOffset);
+                return `${adjustedDate.getMonth() + 1}/${adjustedDate.getDate()}`;
               }}
             />
             <YAxis 
@@ -54,20 +57,24 @@ const DashboardChart = ({ title, data, color, height = '350px' }) => {
               stroke="#8b949e"
               tick={{fill: '#8b949e', fontSize: 11}} 
               width={45}
-              tickFormatter={formatCurrency} 
+              tickFormatter={formatCurrencyAxis} 
             />
             <Tooltip 
               contentStyle={{ backgroundColor: '#0d1117', borderColor: '#30363d', color: '#fff' }}
               itemStyle={{ color: color }}
-              labelFormatter={(label) => new Date(label).toLocaleDateString()}
-              formatter={(value) => [`$${value} Billion`, "Value"]}
+              labelFormatter={(label) => {
+                 const date = new Date(label);
+                 const userTimezoneOffset = date.getTimezoneOffset() * 60000;
+                 const adjustedDate = new Date(date.getTime() + userTimezoneOffset);
+                 return adjustedDate.toLocaleDateString();
+              }}
+              formatter={(value) => [`$${formatTooltipValue(value)}`, "Amount (Millions)"]}
             />
             <Line 
               type="monotone" 
               dataKey="value" 
               stroke={color} 
               strokeWidth={2} 
-              // CONDITIONAL DOTS
               dot={showDots ? { r: 4, fill: color, stroke: '#000000', strokeWidth: 2 } : false}
               activeDot={{ r: 6, stroke: '#fff', strokeWidth: 2 }}
               isAnimationActive={false}
@@ -88,8 +95,6 @@ const App = () => {
   // Controls
   const [timeRange, setTimeRange] = useState('30d');
   const [viewMode, setViewMode] = useState('grid');
-  
-  // Custom Date
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
 
@@ -98,16 +103,40 @@ const App = () => {
     fetch('./data.json')
       .then(res => res.json())
       .then(rawData => {
-        const format = (arr) => arr.map(item => ({ date: item[0], value: item[1] }));
-        setMeta(rawData.meta);
-        setFullData({
-          formula1: format(rawData.formula_1),
-          fedAssets: format(rawData.fed_assets),
-          tga: format(rawData.tga),
-          rrp: format(rawData.rrp),
-          loansFacilities: format(rawData.loans_facilities),
-          loansHeld: format(rawData.loans_held),
-        });
+        const format = (arr) => arr.map(item => ({ date: item.date || item[0], value: item.value || item[1] }));
+        
+        if (rawData[0] && rawData[0].meta) {
+            setMeta(rawData[0].meta);
+        } else if (rawData.meta) {
+            setMeta(rawData.meta);
+        }
+
+        if (Array.isArray(rawData)) {
+            // NEW SCRIPT FORMAT
+            setFullData({
+                formula1: rawData.map(d => ({ date: d.date, value: d.Net_Liquidity })),
+                fedAssets: rawData.map(d => ({ date: d.date, value: d.Fed_Assets })),
+                tga: rawData.map(d => ({ date: d.date, value: d.TGA_Daily })),
+                rrp: rawData.map(d => ({ date: d.date, value: d.RRP * 1000 })), 
+                // --- THE FIX IS HERE ---
+                // We now correctly map these fields from the JSON
+                loansFacilities: rawData.map(d => ({ date: d.date, value: d.Liquidity_Facilities })), 
+                loansHeld: rawData.map(d => ({ date: d.date, value: d.Loans_Held })),
+            });
+            const lastItem = rawData[rawData.length - 1];
+            if (lastItem) setMeta({ last_updated: lastItem.date });
+
+        } else {
+            // OLD LEGACY FORMAT (Just in case)
+            setFullData({
+                formula1: format(rawData.formula_1),
+                fedAssets: format(rawData.fed_assets),
+                tga: format(rawData.tga),
+                rrp: format(rawData.rrp),
+                loansFacilities: format(rawData.loans_facilities),
+                loansHeld: format(rawData.loans_held),
+            });
+        }
       })
       .catch(err => console.error("Error fetching data:", err));
   }, []);
@@ -180,7 +209,7 @@ const App = () => {
       backgroundColor: '#0d1117', 
       minHeight: '100vh', 
       padding: '20px', 
-      color: 'white',
+      color: 'white', 
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' 
     }}>
       <div style={{ maxWidth: '1600px', margin: '0 auto' }}>
@@ -262,12 +291,12 @@ const App = () => {
           gap: '20px' 
         }}>
           
-          <DashboardChart title="Formula #1 (Net Liquidity)" data={filteredData.formula1} color="#a371f7" unit="B" />
-          <DashboardChart title="Treasury General Account (TGA)" data={filteredData.tga} color="#3fb950" unit="B" />
-          <DashboardChart title="Total Assets (WALCL)" data={filteredData.fedAssets} color="#f85149" unit="B" />
-          <DashboardChart title="Reverse Repo (RRP)" data={filteredData.rrp} color="#f0883e" unit="B" />
-          <DashboardChart title="Liquidity Facilities (H41...)" data={filteredData.loansFacilities} color="#58a6ff" unit="B" />
-          <DashboardChart title="Loans Held (WLCFLL)" data={filteredData.loansHeld} color="#d29922" unit="B" />
+          <DashboardChart title="Formula #1 (Net Liquidity)" data={filteredData.formula1} color="#a371f7" />
+          <DashboardChart title="Treasury General Account (TGA)" data={filteredData.tga} color="#3fb950" />
+          <DashboardChart title="Total Assets (WALCL)" data={filteredData.fedAssets} color="#f85149" />
+          <DashboardChart title="Reverse Repo (RRP)" data={filteredData.rrp} color="#f0883e" />
+          <DashboardChart title="Liquidity Facilities" data={filteredData.loansFacilities} color="#58a6ff" />
+          <DashboardChart title="Loans Held (WLCFLL)" data={filteredData.loansHeld} color="#d29922" />
           
         </div>
 
