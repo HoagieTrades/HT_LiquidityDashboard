@@ -206,7 +206,9 @@ const App = () => {
 
   return (
     <div style={{ 
-      backgroundColor: '#0d1117', 
+      backgroundColor: '#0d1117',
+      backgroundImage: 'linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px)',
+      backgroundSize: '30px 30px',
       minHeight: '100vh', 
       padding: '20px', 
       color: 'white', 
