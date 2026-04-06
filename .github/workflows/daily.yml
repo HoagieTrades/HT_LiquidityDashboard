@@ -2,7 +2,7 @@ name: Update Data and Deploy
 
 on:
   schedule:
-    - cron: '0 13 * * *' # Runs at 13:00 UTC (9 AM EST) daily
+    - cron: '0 23 * * *' # Runs at 23:00 UTC (6 PM EST) daily
   workflow_dispatch:      # Allows manual "Run Now" button
 
 permissions:
@@ -13,6 +13,11 @@ permissions:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    
+    # --- ADDED TO FIX THE WARNING ---
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true 
+
     steps:
       # 1. Get your code
       - name: Checkout
@@ -24,7 +29,6 @@ jobs:
         with:
           python-version: '3.9'
           
-      # --- THE FIX IS HERE ---
       - name: Install Python Dependencies
         run: pip install pandas pandas_datareader requests
 
@@ -37,7 +41,6 @@ jobs:
           git config --global user.name 'LiquidityBot'
           git config --global user.email 'bot@noreply.github.com'
           git add public/data.json
-          # We add "|| exit 0" so it doesn't crash if there is no new data to save
           git commit -m "Auto-update liquidity data" || exit 0
           git push
 
@@ -45,7 +48,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24 # <-- CHANGED FROM 20 TO 24
 
       - name: Install NPM Packages
         run: npm install
