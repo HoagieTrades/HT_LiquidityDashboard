@@ -59,8 +59,6 @@ def fetch_treasury_tga():
         # 6. Deduplicate
         df = df.groupby('date')['TGA_Daily'].first().reset_index()
 
-        # NOTE: Treasury data is ALREADY in Millions (e.g. 887,180), so NO division needed.
-        
         df = df.set_index('date')
         df = df.sort_index()
         
@@ -72,28 +70,44 @@ def fetch_treasury_tga():
         return pd.DataFrame()
 
 def fetch_fred_data():
-    """Fetches WALCL, RRP, Loans, and Backup TGA from FRED."""
+    """Fetches WALCL, RRP, Loans, and Backup TGA from FRED ONE BY ONE to prevent crashes."""
     print("Fetching FRED Data (Assets, RRP, Loans)...")
-    try:
-        # Added 'H41RESPPALDKNWW' (Liquidity Facilities) and 'WLCFLL' (Loans Held)
-        fred_data = web.DataReader(
-            ['WALCL', 'RRPONTSYD', 'WDTGAL', 'H41RESPPALDKNWW', 'WLCFLL'], 
-            'fred', 
-            START_DATE, 
-            TODAY
-        )
-        
-        fred_data = fred_data.rename(columns={
-            'WALCL': 'Fed_Assets', 
-            'RRPONTSYD': 'RRP',
-            'WDTGAL': 'TGA_Weekly',
-            'H41RESPPALDKNWW': 'Liquidity_Facilities',
-            'WLCFLL': 'Loans_Held'
-        })
-        return fred_data
-    except Exception as e:
-        print(f"Error fetching FRED data: {e}")
+    
+    # Dictionary of FRED codes and our internal names
+    series_dict = {
+        'WALCL': 'Fed_Assets', 
+        'RRPONTSYD': 'RRP',
+        'WDTGAL': 'TGA_Weekly',
+        'H41RESPPALDKNWW': 'Liquidity_Facilities',
+        'WLCFLL': 'Loans_Held'
+    }
+    
+    combined_df = pd.DataFrame()
+    
+    # Fetch each series one by one instead of all at once
+    for fred_code, new_name in series_dict.items():
+        try:
+            print(f"Fetching {fred_code} ({new_name})...")
+            df = web.DataReader(fred_code, 'fred', START_DATE, TODAY)
+            df = df.rename(columns={fred_code: new_name})
+            
+            if combined_df.empty:
+                combined_df = df
+            else:
+                combined_df = combined_df.join(df, how='outer')
+        except Exception as e:
+            print(f"WARNING: Could not fetch {fred_code}. It may be discontinued or unavailable. Error: {e}")
+            
+    if combined_df.empty:
         return pd.DataFrame()
+        
+    # If a facility was discontinued (fetch failed), fill it with 0 so the math doesn't break
+    for new_name in series_dict.values():
+        if new_name not in combined_df.columns:
+            print(f"Setting missing data column '{new_name}' to 0.")
+            combined_df[new_name] = 0.0
+            
+    return combined_df
 
 def main():
     # 1. Get the data
@@ -101,7 +115,7 @@ def main():
     fred_df = fetch_fred_data()
     
     if fred_df.empty:
-        print("CRITICAL: No FRED data found. Exiting.")
+        print("CRITICAL: No FRED data found at all. Exiting.")
         sys.exit(1)
 
     # 2. Merge Data
@@ -112,15 +126,12 @@ def main():
     else:
         print("WARNING: Using Weekly TGA (FRED) as fallback.")
         merged_df = fred_df.copy()
-        # Weekly TGA is in Billions, multiply by 1000 to get Millions
         merged_df['Final_TGA'] = merged_df['TGA_Weekly'] * 1000
 
-    # 3. Fill Missing Values
-    merged_df = merged_df.ffill().dropna()
+    # 3. Fill Missing Values (Bulletproof approach: forward fill, then backward fill)
+    merged_df = merged_df.ffill().bfill()
 
     # 4. Calculate Net Liquidity (Formula 1)
-    # Formula: Assets - TGA - RRP + Loans + Liquidity Facilities
-    # Units: All converted to Millions
     merged_df['Net_Liquidity'] = (
         merged_df['Fed_Assets'] 
         - merged_df['Final_TGA'] 
@@ -134,7 +145,6 @@ def main():
     final_df = merged_df.reset_index()
     final_df['date'] = final_df['date'].dt.strftime('%Y-%m-%d')
     
-    # Select all columns needed for the frontend
     output_df = final_df[[
         'date', 
         'Net_Liquidity', 
@@ -145,7 +155,6 @@ def main():
         'Loans_Held'
     ]]
     
-    # Rename Final_TGA back to TGA_Daily for the frontend
     output_df = output_df.rename(columns={'Final_TGA': 'TGA_Daily'})
     
     print("Saving data to public/data.json...")
